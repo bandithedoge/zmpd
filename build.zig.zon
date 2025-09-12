@@ -1,0 +1,12 @@
+.{
+    .name = .zmpd,
+    .version = "0.0.0",
+    .fingerprint = 0x291b2019a14c45,
+    .minimum_zig_version = "0.15.1",
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
