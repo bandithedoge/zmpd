@@ -58,6 +58,13 @@ pub fn init(writer: *std.Io.Writer, reader: *std.Io.Reader, options: InitOptions
             return error.MpdError,
     };
 
+    if (options.password) |password| {
+        try writer.writeAll("password ");
+        try client.writeQuoted(password);
+        try writer.writeByte('\n');
+        try writer.flush();
+    }
+
     try writer.print("binarylimit {}\n", .{options.buffer_size});
     try writer.flush();
     client.checkResponse() catch return error.BufSizeTooSmall;
