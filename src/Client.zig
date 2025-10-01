@@ -582,10 +582,23 @@ pub const Subsystem = enum {
     mount,
 };
 
+pub const SubsystemSet = std.EnumSet(Subsystem);
+
 /// Blocks until there is a noteworthy change in one or more of MPD’s subsystems, returns an enum set of those that
 /// changed.
-pub fn idle(self: *Client) ResponseError!std.EnumSet(Subsystem) {
-    try self.writer.writeAll("idle\n");
+pub fn idle(
+    self: *Client,
+    /// Optionally narrow down monitored subsystems
+    subsystems: ?SubsystemSet,
+) ResponseError!SubsystemSet {
+    if (subsystems) |subs| {
+        try self.writer.writeAll("idle");
+        var it = subs.iterator();
+        while (it.next()) |subsystem| {
+            try self.writer.print(" {s}", .{@tagName(subsystem)});
+        }
+        try self.writer.writeByte('\n');
+    } else try self.writer.writeAll("idle\n");
     try self.writer.flush();
 
     var set = std.EnumSet(Subsystem).initEmpty();
@@ -636,9 +649,7 @@ test idle {
         \\OK
     );
 
-    const subsystems = try client.idle();
-
-    try std.testing.expect(subsystems.eql(.initMany(&.{ .queue, .player })));
+    try std.testing.expect((try client.idle(null)).eql(.initMany(&.{ .queue, .player })));
 }
 
 pub const SingleConsume = enum {
