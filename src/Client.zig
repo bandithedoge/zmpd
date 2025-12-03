@@ -75,8 +75,10 @@ pub fn init(writer: *std.Io.Writer, reader: *std.Io.Reader, options: InitOptions
 pub fn nextLine(self: *Client) ResponseError!?zmpd.KV {
     while (true) {
         const line = try self.reader.takeDelimiterExclusive('\n');
+        defer self.reader.toss(1);
 
         if (std.mem.eql(u8, line, "OK")) return null;
+
         if (std.mem.startsWith(u8, line, "ACK")) {
             @branchHint(.unlikely);
             self.last_error_msg = line[std.mem.lastIndexOfScalar(u8, line, '}').? + 2 ..];
