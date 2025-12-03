@@ -1,5 +1,8 @@
 Supports Zig 0.15.1.
 
+Experimental support for the new IO interface is in the [iogate](https://github.com/bandithedoge/zmpd/tree/iogate) branch.
+It will be merged into main after Zig 0.16 is released.
+
 # Features
 
 - No dependencies beside the Zig standard library (not even libc)
