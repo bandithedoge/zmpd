@@ -15,22 +15,28 @@ response: []u8,
 reader: std.Io.Reader,
 
 pub fn init(allocator: std.mem.Allocator) !FakeClient {
-    const options = zmpd.Client.InitOptions{};
+    const options = zmpd.Client.InitOptions{
+        .buffer_size = 4096,
+    };
     const buffer = try allocator.alloc(u8, options.buffer_size);
     const response = try allocator.alloc(u8, options.buffer_size);
 
-    return .{
+    var fake_client = FakeClient{
         .allocator = allocator,
         .options = options,
         .buffer = buffer,
-        .writer = std.Io.Writer.fixed(buffer),
+        .writer = .fixed(buffer),
         .response = response,
-        .reader = .fixed(
-            // expected response after connecting and sending 'binarylimit'
-            \\OK MPD 0.24.0
-            \\OK
-        ),
+        .reader = .fixed(response),
     };
+
+    fake_client.setResponse(
+        // expected response after connecting and sending 'binarylimit'
+        \\OK MPD 0.24.0
+        \\OK
+    );
+
+    return fake_client;
 }
 
 pub fn deinit(self: *const FakeClient) void {
@@ -43,9 +49,10 @@ pub fn client(self: *FakeClient) !zmpd.Client {
 }
 
 pub fn setResponse(self: *FakeClient, fake_response: []const u8) void {
-    self.reader.buffer = @constCast(fake_response);
+    @memcpy(self.response[0..fake_response.len], fake_response);
+    self.response[fake_response.len] = '\n';
     self.reader.seek = 0;
-    self.reader.end = fake_response.len;
+    self.reader.end = fake_response.len + 1;
 }
 
 fn fakeStream(r: *std.Io.Reader, w: *std.Io.Writer, _: std.Io.Limit) std.Io.Reader.StreamError!usize {

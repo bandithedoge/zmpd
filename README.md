@@ -42,10 +42,11 @@ const zmpd = @import("zmpd");
 
 pub fn main() !void {
     // const allocator = ...
+    // const io = ...
 
     // Opens a new connection to the daemon using the standard library's TCP or Unix socket implementation.
     // For more control, see `zmpd.Connection.init` and `zmpd.Client.init`
-    var connection = try zmpd.connect(allocator, .{});
+    var connection = try zmpd.connect(allocator, io, .{});
     defer connection.deinit();
 
     // This is where most of your interaction with the daemon happens.

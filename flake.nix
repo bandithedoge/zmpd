@@ -24,7 +24,7 @@
           ...
         }:
         let
-          zig = inputs.zig.packages.${system}.default;
+          zig = inputs.zig.packages.${system}.master;
           inherit (zig) zls;
         in
         {
