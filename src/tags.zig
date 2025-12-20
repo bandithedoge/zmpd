@@ -88,8 +88,6 @@ pub const Tag = enum {
 };
 
 pub const Tags = struct {
-    arena: std.heap.ArenaAllocator,
-
     /// Not well-defined, see `composer` and `performer`
     artist: ?[]const u8 = null,
     /// Same as `artist` but for sorting. This usually omits prefixes such as "The"
@@ -151,83 +149,77 @@ pub const Tags = struct {
     /// Work ID in the MusicBrainz database
     mb_work_id: ?[]const u8 = null,
 
-    pub fn parseTag(self: *Tags, kv: zmpd.KV) (std.fmt.ParseIntError || std.mem.Allocator.Error)!void {
-        const allocator = self.arena.allocator();
-
+    pub fn parseTag(self: *Tags, arena: std.mem.Allocator, kv: zmpd.KV) (std.fmt.ParseIntError || std.mem.Allocator.Error)!void {
         if (std.mem.eql(u8, kv.key, "Artist"))
-            self.artist = try allocator.dupe(u8, kv.value)
+            self.artist = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "ArtistSort"))
-            self.artist_sort = try allocator.dupe(u8, kv.value)
+            self.artist_sort = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "AlbumArtist"))
-            self.album_artist = try allocator.dupe(u8, kv.value)
+            self.album_artist = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "AlbumArtistSort"))
-            self.album_artist_sort = try allocator.dupe(u8, kv.value)
+            self.album_artist_sort = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Album"))
-            self.album = try allocator.dupe(u8, kv.value)
+            self.album = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "AlbumSort"))
-            self.album_sort = try allocator.dupe(u8, kv.value)
+            self.album_sort = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Title"))
-            self.title = try allocator.dupe(u8, kv.value)
+            self.title = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "TitleSort"))
-            self.title_sort = try allocator.dupe(u8, kv.value)
+            self.title_sort = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Track"))
             self.track = try std.fmt.parseUnsigned(u32, kv.value, 10)
         else if (std.mem.eql(u8, kv.key, "Disc"))
             self.disc = try std.fmt.parseUnsigned(u32, kv.value, 10)
         else if (std.mem.eql(u8, kv.key, "Name"))
-            self.name = try allocator.dupe(u8, kv.value)
+            self.name = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Genre"))
-            self.genre = try allocator.dupe(u8, kv.value)
+            self.genre = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Date"))
-            self.date = try allocator.dupe(u8, kv.value)
+            self.date = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "OriginalDate"))
-            self.original_date = try allocator.dupe(u8, kv.value)
+            self.original_date = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Composer"))
-            self.composer = try allocator.dupe(u8, kv.value)
+            self.composer = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "ComposerSort"))
-            self.composer_sort = try allocator.dupe(u8, kv.value)
+            self.composer_sort = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Performer"))
-            self.performer = try allocator.dupe(u8, kv.value)
+            self.performer = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Comment"))
-            self.comment = try allocator.dupe(u8, kv.value)
+            self.comment = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Label"))
-            self.label = try allocator.dupe(u8, kv.value)
+            self.label = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Grouping"))
-            self.grouping = try allocator.dupe(u8, kv.value)
+            self.grouping = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Work"))
-            self.work = try allocator.dupe(u8, kv.value)
+            self.work = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Conductor"))
-            self.conductor = try allocator.dupe(u8, kv.value)
+            self.conductor = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Ensemble"))
-            self.ensemble = try allocator.dupe(u8, kv.value)
+            self.ensemble = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Movement"))
-            self.movement = try allocator.dupe(u8, kv.value)
+            self.movement = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "MovementNumber"))
-            self.movement_number = try allocator.dupe(u8, kv.value)
+            self.movement_number = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "ShowMovement"))
             self.show_movement = std.mem.eql(u8, kv.value, "1")
         else if (std.mem.eql(u8, kv.key, "Location"))
-            self.location = try allocator.dupe(u8, kv.value)
+            self.location = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Mood"))
-            self.mood = try allocator.dupe(u8, kv.value)
+            self.mood = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_ARTISTID"))
-            self.mb_artist_id = try allocator.dupe(u8, kv.value)
+            self.mb_artist_id = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_ALBUMARTISTID"))
-            self.mb_album_artist_id = try allocator.dupe(u8, kv.value)
+            self.mb_album_artist_id = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_ALBUMID"))
-            self.mb_album_id = try allocator.dupe(u8, kv.value)
+            self.mb_album_id = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_TRACKID"))
-            self.mb_track_id = try allocator.dupe(u8, kv.value)
+            self.mb_track_id = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_RELEASETRACKID"))
-            self.mb_release_track_id = try allocator.dupe(u8, kv.value)
+            self.mb_release_track_id = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_RELEASEGROUPID"))
-            self.mb_release_group_id = try allocator.dupe(u8, kv.value)
+            self.mb_release_group_id = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_WORKID"))
-            self.mb_work_id = try allocator.dupe(u8, kv.value);
-    }
-
-    pub inline fn deinit(self: *const Tags) void {
-        self.arena.deinit();
+            self.mb_work_id = try arena.dupe(u8, kv.value);
     }
 };
 
@@ -235,6 +227,6 @@ test "FieldEnum(Tags) = Tag" {
     try std.testing.expectEqualSlices(
         []const u8,
         std.meta.fieldNames(Tag),
-        std.meta.fieldNames(Tags)[1..], // ignore arena
+        std.meta.fieldNames(Tags),
     );
 }
