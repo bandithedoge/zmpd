@@ -203,8 +203,6 @@ pub const FloatRange = struct {
 
 // TODO: what's actually optional here?
 pub const Song = struct {
-    arena: std.heap.ArenaAllocator,
-
     /// File path relative to MPD library root
     file: ?[]const u8 = null,
     /// Song duration in seconds
@@ -224,17 +222,10 @@ pub const Song = struct {
 
     tags: tags.Tags,
 
-    pub inline fn deinit(self: *const Song) void {
-        self.arena.deinit();
-        self.tags.deinit();
-    }
-
-    fn parseKV(res: *Song, kv: zmpd.KV, comptime check_file: bool) ResponseError!void {
-        const alloc = res.arena.allocator();
-
+    fn parseKV(res: *Song, arena: std.mem.Allocator, kv: zmpd.KV, comptime check_file: bool) ResponseError!void {
         if (check_file) {
             if (std.mem.eql(u8, kv.key, "file")) {
-                res.file = try alloc.dupe(u8, kv.value);
+                res.file = try arena.dupe(u8, kv.value);
                 return;
             }
         }
@@ -244,9 +235,9 @@ pub const Song = struct {
         else if (std.mem.eql(u8, kv.key, "Range"))
             res.range = try .parse(kv.value)
         else if (std.mem.eql(u8, kv.key, "Last-Modified"))
-            res.last_modified = try alloc.dupe(u8, kv.value)
+            res.last_modified = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Added"))
-            res.added = try alloc.dupe(u8, kv.value)
+            res.added = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "Pos"))
             res.pos = try std.fmt.parseUnsigned(u32, kv.value, 10)
         else if (std.mem.eql(u8, kv.key, "Id"))
@@ -256,58 +247,48 @@ pub const Song = struct {
         else if (std.mem.eql(u8, kv.key, "Format"))
             res.format = try .parse(kv.value)
         else
-            try res.tags.parseTag(kv);
+            try res.tags.parseTag(arena, kv);
     }
 
-    pub fn parse(client: *Client, allocator: std.mem.Allocator) ResponseError!Song {
-        var res = Song{
-            .arena = .init(allocator),
-            .tags = .{ .arena = .init(allocator) },
-        };
+    pub fn parse(client: *Client, arena: std.mem.Allocator) ResponseError!Song {
+        var res = Song{ .tags = .{} };
 
         while (try client.nextLine()) |kv|
-            try res.parseKV(kv, true);
+            try res.parseKV(arena, kv, true);
 
         return res;
     }
 
     pub const Iterator = struct {
-        allocator: std.mem.Allocator,
         client: *Client,
         last_file: ?[]const u8 = null,
         last_kv: ?zmpd.KV,
 
-        pub fn init(allocator: std.mem.Allocator, client: *Client) ResponseError!Iterator {
+        pub fn init(client: *Client) ResponseError!Iterator {
             return .{
-                .allocator = allocator,
                 .client = client,
                 .last_kv = try client.nextLine(),
             };
         }
 
-        /// Caller must call `Song.deinit` on each result
-        pub fn next(self: *Iterator) ResponseError!?Song {
+        pub fn next(self: *Iterator, arena: std.mem.Allocator) ResponseError!?Song {
             if (self.last_kv == null) return null;
 
-            var current = Song{
-                .arena = .init(self.allocator),
-                .tags = .{ .arena = .init(self.allocator) },
-            };
-            const allocator = current.arena.allocator();
+            var current = Song{ .tags = .{} };
 
             if (self.last_file) |last_file|
-                current.file = try allocator.dupe(u8, last_file);
+                current.file = try arena.dupe(u8, last_file);
 
             while (self.last_kv) |kv| {
                 if (std.mem.eql(u8, kv.key, "file")) {
                     if (self.last_file) |last_file| {
-                        self.allocator.free(last_file);
-                        self.last_file = try self.allocator.dupe(u8, kv.value);
+                        self.arena.free(last_file);
+                        self.last_file = try self.arena.dupe(u8, kv.value);
                         self.last_kv = try self.client.nextLine();
                         return current;
                     } else {
-                        self.last_file = try self.allocator.dupe(u8, kv.value);
-                        current.file = try allocator.dupe(u8, kv.value);
+                        self.last_file = try self.arena.dupe(u8, kv.value);
+                        current.file = try arena.dupe(u8, kv.value);
                     }
                 } else try current.parseKV(kv, true);
 
@@ -316,25 +297,23 @@ pub const Song = struct {
 
             return current;
         }
-
-        pub inline fn deinit(self: *const Iterator) void {
-            if (self.last_file) |last_file|
-                self.allocator.free(last_file);
-        }
     };
 };
 
-/// Caller must call `Song.deinit` on the result to free strings
-pub fn getCurrentSong(self: *Client, allocator: std.mem.Allocator) ResponseError!Song {
+pub fn getCurrentSong(self: *Client, arena: std.mem.Allocator) ResponseError!Song {
     try self.writer.writeAll("currentsong\n");
     try self.writer.flush();
-    return .parse(self, allocator);
+    return .parse(self, arena);
 }
 
 test getCurrentSong {
     var fake = try FakeClient.init(std.testing.allocator);
     defer fake.deinit();
     var client = try fake.client();
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     // test unicode and repeat values
 
@@ -370,12 +349,10 @@ test getCurrentSong {
     );
 
     {
-        const song = try client.getCurrentSong(std.testing.allocator);
-        defer song.deinit();
+        const song = try client.getCurrentSong(allocator);
 
         try std.testing.expectEqualDeep(
             Song{
-                .arena = song.arena,
                 .file = "Gerogerigegege, The/[1990] The Gerogerigegege - パンクの鬼_ TOKYO ANAL DYNAMITE/01-01 - The Gerogerigegege - ロックン・ロール.flac",
                 .duration = 57.133,
                 .last_modified = "2025-06-08T14:50:47Z",
@@ -388,7 +365,6 @@ test getCurrentSong {
                     .channels = 2,
                 },
                 .tags = .{
-                    .arena = song.tags.arena,
                     .artist = "The Gerogerigegege",
                     .artist_sort = "Gerogerigegege, The",
                     .album_artist = "The Gerogerigegege",
@@ -444,12 +420,10 @@ test getCurrentSong {
     );
 
     {
-        const song = try client.getCurrentSong(std.testing.allocator);
-        defer song.deinit();
+        const song = try client.getCurrentSong(allocator);
 
         try std.testing.expectEqualDeep(
             Song{
-                .arena = song.arena,
                 .file = "Flume/[2019] Flume - Hi This Is Flume/01-05 - Flume - ╜Φ°⌂▌╫§╜φ°⌂▌╫§╜φ°⌂▌╫§╜φ°⌂▌╫§╜φ°⌂▌╫§╜φ°⌂▌╫§╜φ°⌂▌╫§╜φ°⌂▌╫§╜φ°⌂▌╫§╜φ°⌂▌╫.flac",
                 .duration = 33.567,
                 .last_modified = "2025-08-31T15:30:01Z",
@@ -462,7 +436,6 @@ test getCurrentSong {
                     .channels = 2,
                 },
                 .tags = .{
-                    .arena = song.tags.arena,
                     .artist = "Flume",
                     .album_artist = "Flume",
                     .album = "Hi This Is Flume",
@@ -512,12 +485,10 @@ test getCurrentSong {
     );
 
     {
-        const song = try client.getCurrentSong(std.testing.allocator);
-        defer song.deinit();
+        const song = try client.getCurrentSong(allocator);
 
         try std.testing.expectEqualDeep(
             Song{
-                .arena = song.arena,
                 .file = "Aphex Twin/[1999] Aphex Twin - Windowlicker/01-02 - Aphex Twin - ∆Mᵢ⁻¹ = −∂ ∑ Dᵢ[n] [∑ Fⱼᵢ[n−1] + F extᵢ[n⁻¹]].mp3",
                 .duration = 347.913,
                 .last_modified = "2025-06-08T12:51:45Z",
@@ -530,7 +501,6 @@ test getCurrentSong {
                     .channels = 2,
                 },
                 .tags = .{
-                    .arena = song.tags.arena,
                     .artist = "Aphex Twin",
                     .artist_sort = "Aphex Twin",
                     .album_artist = "Aphex Twin",
@@ -663,8 +633,6 @@ pub const SingleConsume = enum {
 pub const Status = struct {
     const State = enum { play, stop, pause };
 
-    arena: std.heap.ArenaAllocator,
-
     partition: ?[]const u8 = null,
     /// Consider calling `getVolume` instead if you only need this
     volume: ?u8 = null,
@@ -697,25 +665,17 @@ pub const Status = struct {
     /// Update job id
     update_id: ?u32 = null,
     last_loaded_playlist: ?u32 = null,
-
-    pub inline fn deinit(self: *const Status) void {
-        self.arena.deinit();
-    }
 };
 
-/// Caller must call `Status.deinit` on the result to free strings
-pub fn getStatus(self: *Client, allocator: std.mem.Allocator) ResponseError!Status {
+pub fn getStatus(self: *Client, arena: std.mem.Allocator) ResponseError!Status {
     try self.writer.writeAll("status\n");
     try self.writer.flush();
 
-    var res = Status{
-        .arena = .init(allocator),
-    };
-    const alloc = res.arena.allocator();
+    var res = Status{};
 
     while (try self.nextLine()) |kv| {
         if (std.mem.eql(u8, kv.key, "partition"))
-            res.partition = try alloc.dupe(u8, kv.value)
+            res.partition = try arena.dupe(u8, kv.value)
         else if (std.mem.eql(u8, kv.key, "volume"))
             res.volume = try std.fmt.parseUnsigned(u8, kv.value, 10)
         else if (std.mem.eql(u8, kv.key, "repeat"))
@@ -777,6 +737,10 @@ test getStatus {
     defer fake.deinit();
     var client = try fake.client();
 
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     fake.setResponse(
         \\volume: 40
         \\repeat: 1
@@ -801,12 +765,10 @@ test getStatus {
         \\OK
     );
 
-    const status = try client.getStatus(std.testing.allocator);
-    defer status.deinit();
+    const status = try client.getStatus(allocator);
 
     try std.testing.expectEqualDeep(
         Status{
-            .arena = status.arena,
             .partition = "default",
             .volume = 40,
             .repeat = true,
@@ -1233,12 +1195,11 @@ pub const Range = struct {
     }
 };
 
-/// Query the queue for songs matching a filter string. Caller must call `Song.Iterator.deinit` on the result.
+/// Query the queue for songs matching a filter string.
 ///
 // TODO: filter string builder
 pub fn queryQueue(
     self: *Client,
-    allocator: std.mem.Allocator,
     /// See https://mpd.readthedocs.io/en/latest/protocol.html#filter-syntax
     filter: []const u8,
     case_sensitive: bool,
@@ -1262,7 +1223,7 @@ pub fn queryQueue(
     try self.writer.writeByte('\n');
     try self.writer.flush();
 
-    return .init(allocator, self);
+    return .init(self);
 }
 
 pub fn getSongInQueueId(self: *Client, allocator: std.mem.Allocator, id: u32) ResponseError!Song {
@@ -1279,31 +1240,26 @@ pub fn getSongInQueuePos(self: *Client, allocator: std.mem.Allocator, position: 
     return try Song.parse(self, allocator);
 }
 
-/// Caller must call `Song.Iterator.deinit` on the result
-pub fn getSongsInQueueRange(self: *Client, allocator: std.mem.Allocator, range: Range) ResponseError!Song.Iterator {
+pub fn getSongsInQueueRange(self: *Client, range: Range) ResponseError!Song.Iterator {
     try self.writer.print("playlistinfo {f}\n", .{range});
     try self.writer.flush();
 
-    return .init(allocator, self);
+    return .init(self);
 }
 
-/// Caller must call `Song.Iterator.deinit` on the result
-pub fn getQueue(self: *Client, allocator: std.mem.Allocator) ResponseError!Song.Iterator {
+pub fn getQueue(self: *Client) ResponseError!Song.Iterator {
     try self.writer.writeAll("playlistinfo\n");
     try self.writer.flush();
 
-    return .init(allocator, self);
+    return .init(self);
 }
 
 /// Get changed songs in the queue since `previous_version`. Use the `queue_length` field in `Status` to detect songs
 /// that were deleted.
 ///
-/// Caller must call `Song.Iterator.deinit` on the result.
-///
 /// Use `queueChangesPosId` if you only need position and ID changes.
 pub fn getQueueChanges(
     self: *Client,
-    allocator: std.mem.Allocator,
     previous_version: u32,
     /// Optionally limit the output
     range: ?Range,
@@ -1313,7 +1269,7 @@ pub fn getQueueChanges(
     } else try self.writer.print("plchanges {}\n", .{previous_version});
     try self.writer.flush();
 
-    return .init(allocator, self);
+    return .init(self);
 }
 
 pub const PosId = struct {
@@ -1504,23 +1460,21 @@ pub fn clearTag(
 }
 
 pub const FileIterator = struct {
-    allocator: std.mem.Allocator,
     client: *Client,
 
     /// Caller owns each result
-    pub fn next(self: *FileIterator) ResponseError!?[]const u8 {
+    pub fn next(self: *FileIterator, arena: std.mem.Allocator) ResponseError!?[]const u8 {
         while (try self.client.nextLine()) |kv| {
             if (std.mem.eql(u8, kv.key, "file"))
-                return try self.allocator.dupe(u8, kv.value);
+                return try arena.dupe(u8, kv.value);
         }
         return null;
     }
 };
 
-/// List songs paths in the specified playlist. Caller must call `PlaylistSongs.deinit` on the result.
+/// List songs paths in the specified playlist.
 pub fn getPlaylistSongs(
     self: *Client,
-    allocator: std.mem.Allocator,
     name: []const u8,
     /// Optionally limit the output
     range: ?Range,
@@ -1533,7 +1487,6 @@ pub fn getPlaylistSongs(
     try self.writer.flush();
 
     return .{
-        .allocator = allocator,
         .client = self,
     };
 }
@@ -1552,19 +1505,19 @@ test getPlaylistSongs {
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
+    const allocator = arena.allocator();
 
-    var it = try client.getPlaylistSongs(arena.allocator(), "hjkuvxyciuydfiuydsf", null);
+    var it = try client.getPlaylistSongs("hjkuvxyciuydfiuydsf", null);
 
-    try std.testing.expectEqualStrings("Car Bomb/[2012] Car Bomb - w^w^^w^w/01-01 - Car Bomb - The Sentinel.mp3", (try it.next()).?);
-    try std.testing.expectEqualStrings("Car Bomb/[2012] Car Bomb - w^w^^w^w/01-02 - Car Bomb - Auto-named.mp3", (try it.next()).?);
-    try std.testing.expectEqualStrings("Car Bomb/[2012] Car Bomb - w^w^^w^w/01-03 - Car Bomb - Finish It.mp3", (try it.next()).?);
-    try std.testing.expectEqual(null, try it.next());
+    try std.testing.expectEqualStrings("Car Bomb/[2012] Car Bomb - w^w^^w^w/01-01 - Car Bomb - The Sentinel.mp3", (try it.next(allocator)).?);
+    try std.testing.expectEqualStrings("Car Bomb/[2012] Car Bomb - w^w^^w^w/01-02 - Car Bomb - Auto-named.mp3", (try it.next(allocator)).?);
+    try std.testing.expectEqualStrings("Car Bomb/[2012] Car Bomb - w^w^^w^w/01-03 - Car Bomb - Finish It.mp3", (try it.next(allocator)).?);
+    try std.testing.expectEqual(null, try it.next(allocator));
 }
 
-/// List songs with metadata in the specified playlist. Caller must call `Song.Iterator.deinit` on the result.
+/// List songs with metadata in the specified playlist.
 pub fn getPlaylistSongsMetadata(
     self: *Client,
-    allocator: std.mem.Allocator,
     playlist: []const u8,
     /// Optionally limit the output
     range: ?Range,
@@ -1576,13 +1529,12 @@ pub fn getPlaylistSongsMetadata(
     try self.writer.writeByte('\n');
     try self.writer.flush();
 
-    return .init(allocator, self);
+    return .init(self);
 }
 
-/// Search a playlist for songs matching the filter. Caller must call `Song.Iterator.deinit` on the result.
+/// Search a playlist for songs matching the filter.
 pub fn queryPlaylist(
     self: *Client,
-    allocator: std.mem.Allocator,
     playlist: []const u8,
     /// See https://mpd.readthedocs.io/en/latest/protocol.html#filter-syntax
     filter: []const u8,
@@ -1598,86 +1550,74 @@ pub fn queryPlaylist(
     try self.writer.writeByte('\n');
     try self.writer.flush();
 
-    return .init(allocator, self);
+    return .init(self);
 }
 
 pub const Playlist = struct {
-    arena: std.heap.ArenaAllocator,
     name: []const u8,
     /// ISO-8601 date
     last_modified: []const u8,
 
-    pub fn deinit(self: *const Playlist) void {
-        self.arena.deinit();
-    }
-
     pub const Iterator = struct {
-        allocator: std.mem.Allocator,
         client: *Client,
-        // current: Playlist = undefined,
         last_name: ?[]const u8 = null,
         last_kv: ?zmpd.KV,
 
-        pub fn init(allocator: std.mem.Allocator, client: *Client) ResponseError!Iterator {
+        pub fn init(client: *Client) ResponseError!Iterator {
             return .{
-                .allocator = allocator,
                 .client = client,
                 .last_kv = try client.nextLine(),
             };
         }
 
-        /// Caller must call `Playlist.deinit` on each result
-        pub fn next(self: *Iterator) ResponseError!?Playlist {
+        pub fn next(self: *Iterator, arena: std.mem.Allocator) ResponseError!?Playlist {
             if (self.last_kv == null) return null;
 
             var current = Playlist{
-                .arena = .init(self.allocator),
                 .name = "",
                 .last_modified = "",
             };
-            const allocator = current.arena.allocator();
 
             if (self.last_name) |last_name|
-                current.name = try allocator.dupe(u8, last_name);
+                current.name = try arena.dupe(u8, last_name);
 
             while (self.last_kv) |kv| {
                 if (std.mem.eql(u8, kv.key, "playlist")) {
                     if (self.last_name) |last_name| {
-                        self.allocator.free(last_name);
-                        self.last_name = try self.allocator.dupe(u8, kv.value);
+                        arena.free(last_name);
+                        self.last_name = try arena.dupe(u8, kv.value);
                         self.last_kv = try self.client.nextLine();
                         return current;
                     } else {
-                        self.last_name = try self.allocator.dupe(u8, kv.value);
-                        current.name = try allocator.dupe(u8, kv.value);
+                        self.last_name = try arena.dupe(u8, kv.value);
+                        current.name = try arena.dupe(u8, kv.value);
                     }
                 } else if (std.mem.eql(u8, kv.key, "Last-Modified"))
-                    current.last_modified = try allocator.dupe(u8, kv.value);
+                    current.last_modified = try arena.dupe(u8, kv.value);
                 self.last_kv = try self.client.nextLine();
             }
 
             return current;
         }
-
-        pub inline fn deinit(self: *const Iterator) void {
-            if (self.last_name) |last_name|
-                self.allocator.free(last_name);
-        }
     };
 };
 
-/// Get a list of playlists in MPD's playlist directory. Caller must call `Playlist.Iterator.deinit` on the result.
-pub fn getPlaylists(self: *Client, allocator: std.mem.Allocator) ResponseError!Playlist.Iterator {
+/// Get a list of playlists in MPD's playlist directory.
+pub fn getPlaylists(self: *Client) ResponseError!Playlist.Iterator {
     try self.writer.writeAll("listplaylists\n");
     try self.writer.flush();
 
-    return try .init(allocator, self);
+    return try .init(self);
 }
 
 test getPlaylists {
     var fake = try FakeClient.init(std.testing.allocator);
     defer fake.deinit();
     var client = try fake.client();
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     fake.setResponse(
         \\playlist: gsdfhjkdhjksf
@@ -1689,37 +1629,30 @@ test getPlaylists {
         \\OK
     );
 
-    var it = try client.getPlaylists(std.testing.allocator);
-    defer it.deinit();
+    var it = try client.getPlaylists();
 
     {
-        var playlist = (try it.next()).?;
-        defer playlist.deinit();
+        const playlist = (try it.next(allocator)).?;
         try std.testing.expectEqualDeep(Playlist{
-            .arena = playlist.arena,
             .name = "gsdfhjkdhjksf",
             .last_modified = "2025-07-31T19:26:07Z",
         }, playlist);
     }
     {
-        var playlist = (try it.next()).?;
-        defer playlist.deinit();
+        const playlist = (try it.next(allocator)).?;
         try std.testing.expectEqualDeep(Playlist{
-            .arena = playlist.arena,
             .name = "iuydfyiufdsfiuydsfiu",
             .last_modified = "2025-08-03T19:04:07Z",
         }, playlist);
     }
     {
-        var playlist = (try it.next()).?;
-        defer playlist.deinit();
+        const playlist = (try it.next(allocator)).?;
         try std.testing.expectEqualDeep(Playlist{
-            .arena = playlist.arena,
             .name = "hjkuvxyciuydfiuydsf",
             .last_modified = "2025-08-03T19:23:10Z",
         }, playlist);
     }
-    try std.testing.expectEqual(null, try it.next());
+    try std.testing.expectEqual(null, try it.next(allocator));
 }
 
 /// Load a playlist into the queue
@@ -1961,53 +1894,42 @@ test count {
 }
 
 pub const CountGroup = struct {
-    allocator: std.mem.Allocator,
     value: []const u8,
     songs: ?u32 = null,
     length_seconds: ?u64 = null,
 
-    pub inline fn deinit(self: *const CountGroup) void {
-        self.allocator.free(self.value);
-    }
-
     pub const Iterator = struct {
-        allocator: std.mem.Allocator,
         client: *Client,
         tag_string: []const u8,
         last_kv: ?zmpd.KV,
         last_value: ?[]const u8 = null,
 
-        pub fn init(allocator: std.mem.Allocator, client: *Client, tag: tags.Tag) ResponseError!Iterator {
+        pub fn init(client: *Client, tag: tags.Tag) ResponseError!Iterator {
             return .{
-                .allocator = allocator,
                 .client = client,
                 .tag_string = tag.string(),
                 .last_kv = try client.nextLine(),
             };
         }
 
-        /// Caller must call `CountGroup.deinit` on each result
-        pub fn next(self: *Iterator) ResponseError!?CountGroup {
+        pub fn next(self: *Iterator, arena: std.mem.Allocator) ResponseError!?CountGroup {
             if (self.last_kv == null) return null;
 
-            var current = CountGroup{
-                .allocator = self.allocator,
-                .value = "",
-            };
+            var current = CountGroup{ .value = "" };
 
             if (self.last_value) |last_value|
-                current.value = try self.allocator.dupe(u8, last_value);
+                current.value = try arena.dupe(u8, last_value);
 
             while (self.last_kv) |kv| {
                 if (std.mem.eql(u8, kv.key, self.tag_string)) {
                     if (self.last_value) |last_value| {
-                        self.allocator.free(last_value);
-                        self.last_value = try self.allocator.dupe(u8, kv.value);
+                        arena.free(last_value);
+                        self.last_value = try arena.dupe(u8, kv.value);
                         self.last_kv = try self.client.nextLine();
                         return current;
                     } else {
-                        self.last_value = try self.allocator.dupe(u8, kv.value);
-                        current.value = try self.allocator.dupe(u8, kv.value);
+                        self.last_value = try arena.dupe(u8, kv.value);
+                        current.value = try arena.dupe(u8, kv.value);
                     }
                 } else if (std.mem.eql(u8, kv.key, "songs"))
                     current.songs = try std.fmt.parseUnsigned(u32, kv.value, 10)
@@ -2019,21 +1941,14 @@ pub const CountGroup = struct {
 
             return current;
         }
-
-        pub inline fn deinit(self: *const Iterator) void {
-            if (self.last_value) |last_value|
-                self.allocator.free(last_value);
-        }
     };
 };
 
-/// Count the number of songs and their total playtime grouped by a tag. Caller must call `CountGroup.Iterator.deinit`
-/// on the result.
+/// Count the number of songs and their total playtime grouped by a tag.
 ///
 /// See `count`
 pub fn countGroup(
     self: *Client,
-    allocator: std.mem.Allocator,
     tag: tags.Tag,
     /// See https://mpd.readthedocs.io/en/latest/protocol.html#filter-syntax
     filter: ?[]const u8,
@@ -2046,13 +1961,17 @@ pub fn countGroup(
     try self.writer.print("group {f}\n", .{tag});
     try self.writer.flush();
 
-    return try .init(allocator, self, tag);
+    return try .init(self, tag);
 }
 
 test countGroup {
     var fake = try FakeClient.init(std.testing.allocator);
     defer fake.deinit();
     var client = try fake.client();
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     fake.setResponse(
         \\Album: Horse Rotorvator
@@ -2067,15 +1986,12 @@ test countGroup {
         \\OK
     );
 
-    var it = try client.countGroup(std.testing.allocator, .album, "(Artist == 'Coil')");
-    defer it.deinit();
+    var it = try client.countGroup(.album, "(Artist == 'Coil')");
 
     {
-        const c = (try it.next()).?;
-        defer c.deinit();
+        const c = (try it.next(allocator)).?;
         try std.testing.expectEqualDeep(
             CountGroup{
-                .allocator = std.testing.allocator,
                 .value = "Horse Rotorvator",
                 .songs = 12,
                 .length_seconds = 2955,
@@ -2084,11 +2000,9 @@ test countGroup {
         );
     }
     {
-        const c = (try it.next()).?;
-        defer c.deinit();
+        const c = (try it.next(allocator)).?;
         try std.testing.expectEqualDeep(
             CountGroup{
-                .allocator = std.testing.allocator,
                 .value = "How to Destroy Angels",
                 .songs = 2,
                 .length_seconds = 2363,
@@ -2097,11 +2011,9 @@ test countGroup {
         );
     }
     {
-        const c = (try it.next()).?;
-        defer c.deinit();
+        const c = (try it.next(allocator)).?;
         try std.testing.expectEqualDeep(
             CountGroup{
-                .allocator = std.testing.allocator,
                 .value = "Scatology",
                 .songs = 13,
                 .length_seconds = 3295,
@@ -2109,7 +2021,7 @@ test countGroup {
             c,
         );
     }
-    try std.testing.expectEqual(null, try it.next());
+    try std.testing.expectEqual(null, try it.next(allocator));
 }
 
 /// Calculate the song's audio fingerprint. Only works if MPD was compiled with libchromaprint, returns
@@ -2128,10 +2040,9 @@ pub fn getFingerprint(self: *Client, allocator: std.mem.Allocator, path: []const
     return error.UnexpectedResponse;
 }
 
-/// Search the database for songs matching a filter string. Caller must call `Song.Iterator.deinit` on the result.
+/// Search the database for songs matching a filter string
 pub fn queryDatabase(
     self: *Client,
-    allocator: std.mem.Allocator,
     /// See https://mpd.readthedocs.io/en/latest/protocol.html#filter-syntax
     filter: []const u8,
     /// Optionally sort by a tag. `*_sort` variants will fall back to the regular tag.
@@ -2148,7 +2059,7 @@ pub fn queryDatabase(
     try self.writer.writeByte('\n');
     try self.writer.flush();
 
-    return .init(allocator, self);
+    return .init(self);
 }
 
 /// Search the database for songs matching a filter string and add them to the queue
@@ -2192,23 +2103,20 @@ pub fn queryDatabaseCount(
 }
 
 pub const UniqueIterator = struct {
-    allocator: std.mem.Allocator,
     client: *Client,
     tag_string: []const u8,
 
-    pub fn init(allocator: std.mem.Allocator, client: *Client, tag: tags.Tag) UniqueIterator {
+    pub fn init(client: *Client, tag: tags.Tag) UniqueIterator {
         return .{
-            .allocator = allocator,
             .client = client,
             .tag_string = tag.string(),
         };
     }
 
-    /// Caller owns the returned string
-    pub fn next(self: *UniqueIterator) ResponseError!?[]const u8 {
+    pub fn next(self: *UniqueIterator, arena: std.mem.Allocator) ResponseError!?[]const u8 {
         while (try self.client.nextLine()) |kv|
             if (std.mem.eql(u8, kv.key, self.tag_string))
-                return try self.allocator.dupe(u8, kv.value);
+                return try arena.dupe(u8, kv.value);
         return null;
     }
 };
@@ -2218,7 +2126,6 @@ pub const UniqueIterator = struct {
 /// See `listUniqueGroup`
 pub fn getUnique(
     self: *Client,
-    allocator: std.mem.Allocator,
     tag: tags.Tag,
     /// See https://mpd.readthedocs.io/en/latest/protocol.html#filters
     filter: ?[]const u8,
@@ -2230,7 +2137,7 @@ pub fn getUnique(
     try self.writer.writeByte('\n');
     try self.writer.flush();
 
-    return .init(allocator, self, tag);
+    return .init(self, tag);
 }
 
 test getUnique {
@@ -2248,13 +2155,15 @@ test getUnique {
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var it = try client.getUnique(arena.allocator(), .album, "(added-since '2025-08')");
+    const allocator = arena.allocator();
 
-    try std.testing.expectEqualStrings("Amongst the Catacombs of Nephren-Ka", (try it.next()).?);
-    try std.testing.expectEqualStrings("Calculating Infinity", (try it.next()).?);
-    try std.testing.expectEqualStrings("Caustic Window LP", (try it.next()).?);
-    try std.testing.expectEqualStrings("Centralia", (try it.next()).?);
-    try std.testing.expectEqual(null, try it.next());
+    var it = try client.getUnique(.album, "(added-since '2025-08')");
+
+    try std.testing.expectEqualStrings("Amongst the Catacombs of Nephren-Ka", (try it.next(allocator)).?);
+    try std.testing.expectEqualStrings("Calculating Infinity", (try it.next(allocator)).?);
+    try std.testing.expectEqualStrings("Caustic Window LP", (try it.next(allocator)).?);
+    try std.testing.expectEqualStrings("Centralia", (try it.next(allocator)).?);
+    try std.testing.expectEqual(null, try it.next(allocator));
 }
 
 pub const UniqueGroup = union {
@@ -2262,18 +2171,17 @@ pub const UniqueGroup = union {
     entry: []const u8,
 
     pub const Iterator = struct {
-        allocator: std.mem.Allocator,
         client: *Client,
         tag_string: []const u8,
         group_string: []const u8,
 
         /// Caller owns the returned string
-        pub fn next(self: *Iterator) ResponseError!?UniqueGroup {
+        pub fn next(self: *Iterator, arena: std.mem.Allocator) ResponseError!?UniqueGroup {
             while (try self.client.nextLine()) |kv| {
                 if (std.mem.eql(u8, kv.key, self.group_string))
-                    return .{ .group = try self.allocator.dupe(u8, kv.value) }
+                    return .{ .group = try arena.dupe(u8, kv.value) }
                 else if (std.mem.eql(u8, kv.key, self.tag_string))
-                    return .{ .entry = try self.allocator.dupe(u8, kv.value) };
+                    return .{ .entry = try arena.dupe(u8, kv.value) };
             }
             return null;
         }
@@ -2285,7 +2193,6 @@ pub const UniqueGroup = union {
 /// See `listUnique`
 pub fn getUniqueGroup(
     self: *Client,
-    allocator: std.mem.Allocator,
     tag: tags.Tag,
     group: tags.Tag,
     /// See https://mpd.readthedocs.io/en/latest/protocol.html#filters
@@ -2307,7 +2214,6 @@ pub fn getUniqueGroup(
     try self.writer.flush();
 
     return UniqueGroup.Iterator{
-        .allocator = allocator,
         .client = self,
         .group_string = group.string(),
         .tag_string = tag.string(),
@@ -2332,22 +2238,22 @@ test getUniqueGroup {
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
+    const allocator = arena.allocator();
 
     var it = try client.getUniqueGroup(
-        arena.allocator(),
         .album,
         .album_artist,
         "(added-since '2025-08')",
         null,
     );
 
-    try std.testing.expectEqualStrings("Car Bomb", (try it.next()).?.group);
-    try std.testing.expectEqualStrings("Centralia", (try it.next()).?.entry);
-    try std.testing.expectEqualStrings("Tiles Whisper Dreams", (try it.next()).?.entry);
-    try std.testing.expectEqualStrings("Caustic Window", (try it.next()).?.group);
-    try std.testing.expectEqualStrings("Caustic Window LP", (try it.next()).?.entry);
-    try std.testing.expectEqualStrings("Coil", (try it.next()).?.group);
-    try std.testing.expectEqualStrings("Horse Rotorvator", (try it.next()).?.entry);
+    try std.testing.expectEqualStrings("Car Bomb", (try it.next(allocator)).?.group);
+    try std.testing.expectEqualStrings("Centralia", (try it.next(allocator)).?.entry);
+    try std.testing.expectEqualStrings("Tiles Whisper Dreams", (try it.next(allocator)).?.entry);
+    try std.testing.expectEqualStrings("Caustic Window", (try it.next(allocator)).?.group);
+    try std.testing.expectEqualStrings("Caustic Window LP", (try it.next(allocator)).?.entry);
+    try std.testing.expectEqualStrings("Coil", (try it.next(allocator)).?.group);
+    try std.testing.expectEqualStrings("Horse Rotorvator", (try it.next(allocator)).?.entry);
 }
 
 /// Update the database with added, removed and modified files. Returns the update job (see `Status.update_id`).
