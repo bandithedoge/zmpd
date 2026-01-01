@@ -70,7 +70,7 @@ pub fn guessAddress(allocator: std.mem.Allocator, io: std.Io) !Address {
             return .{ .unix = try .init(path) };
         }
 
-        std.fs.accessAbsolute("/run/mpd/socket", .{ .read = true, .write = true }) catch break :blk;
+        std.Io.Dir.accessAbsolute(io, "/run/mpd/socket", .{ .read = true, .write = true }) catch break :blk;
 
         return .{ .unix = try .init("/run/mpd/socket") };
     }
