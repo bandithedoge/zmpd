@@ -2,7 +2,7 @@
     .name = .zmpd,
     .version = "0.0.0",
     .fingerprint = 0x291b2019a14c45,
-    .minimum_zig_version = "0.16.0-dev.1878+2a02c7a0d",
+    .minimum_zig_version = "0.16.0-dev.2075+62d6bbc7d",
 
     .paths = .{
         "build.zig",

@@ -22,8 +22,8 @@ pub const ProtocolError = error{
 
 /// Open an MPD connection using the standard library's TCP/socked with reasonable defaults. See `Connection.init` and
 /// `Client.init` for more options.
-pub fn connect(allocator: std.mem.Allocator, io: std.Io, init_options: Client.InitOptions) !Connection {
-    const address = try guessAddress(allocator, io);
+pub fn connect(allocator: std.mem.Allocator, io: std.Io, env_map: *std.process.Environ.Map, init_options: Client.InitOptions) !Connection {
+    const address = try guessAddress(allocator, io, env_map);
     defer switch (address) {
         .unix => |add| allocator.free(add.path),
         else => {},
@@ -51,10 +51,7 @@ pub const Address = union(enum) {
 /// https://mpd.readthedocs.io/en/latest/client.html#connecting-to-mpd
 ///
 /// Caller owns the returned address.
-pub fn guessAddress(allocator: std.mem.Allocator, io: std.Io) !Address {
-    var env_map = try std.process.getEnvMap(allocator);
-    defer env_map.deinit();
-
+pub fn guessAddress(allocator: std.mem.Allocator, io: std.Io, env_map: *std.process.Environ.Map) !Address {
     const port = if (env_map.get("MPD_PORT")) |p|
         try std.fmt.parseInt(u16, p, 10)
     else
