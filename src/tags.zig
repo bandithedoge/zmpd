@@ -1,5 +1,3 @@
-//! Doc comments mostly copied from https://mpd.readthedocs.io/en/latest/protocol.html#tags
-
 const std = @import("std");
 const zmpd = @import("zmpd.zig");
 
@@ -42,44 +40,15 @@ pub const Tag = enum {
     mb_work_id,
 
     pub fn string(self: Tag) []const u8 {
-        // https://github.com/MusicPlayerDaemon/libmpdclient/blob/cc2f3e0199520c93ca28c5deb4520c938b8cdebb/src/tag.c#L10-L51
-        return switch (self) {
-            .artist => "Artist",
-            .artist_sort => "ArtistSort",
-            .album_artist => "AlbumArtist",
-            .album_artist_sort => "AlbumArtistSort",
-            .album => "Album",
-            .album_sort => "AlbumSort",
-            .title => "Title",
-            .title_sort => "TitleSort",
-            .track => "Track",
-            .disc => "Disc",
-            .name => "Name",
-            .genre => "Genre",
-            .date => "Date",
-            .original_date => "OriginalDate",
-            .composer => "Composer",
-            .composer_sort => "ComposerSort",
-            .performer => "Performer",
-            .comment => "Comment",
-            .label => "Label",
-            .grouping => "Grouping",
-            .work => "Work",
-            .conductor => "Conductor",
-            .ensemble => "Ensemble",
-            .movement => "Movement",
-            .movement_number => "MovementNumber",
-            .show_movement => "ShowMovement",
-            .location => "Location",
-            .mood => "Mood",
-            .mb_artist_id => "MUSICBRAINZ_ARTISTID",
-            .mb_album_artist_id => "MUSICBRAINZ_ALBUMARTISTID",
-            .mb_album_id => "MUSICBRAINZ_ALBUMID",
-            .mb_track_id => "MUSICBRAINZ_TRACKID",
-            .mb_release_track_id => "MUSICBRAINZ_RELEASETRACKID",
-            .mb_release_group_id => "MUSICBRAINZ_RELEASEGROUPID",
-            .mb_work_id => "MUSICBRAINZ_WORKID",
-        };
+        const fields = @typeInfo(MpdTags).@"enum".fields;
+        const map = std.StaticStringMap(MpdTags).initComptime(blk: {
+            var kvs: [fields.len]struct { []const u8, MpdTags } = undefined;
+            for (fields, 0..) |field, i| {
+                kvs[i] = .{ @tagName(@field(mpd_map, field.name)), @enumFromInt(field.value) };
+            }
+            break :blk kvs;
+        });
+        return @tagName(map.get(@tagName(self)).?);
     }
 
     pub fn format(self: Tag, writer: *std.Io.Writer) !void {
@@ -87,6 +56,50 @@ pub const Tag = enum {
     }
 };
 
+/// tag names as reported by MPD:
+/// https://github.com/MusicPlayerDaemon/libmpdclient/blob/cc2f3e0199520c93ca28c5deb4520c938b8cdebb/src/tag.c#L10-L51
+const mpd_map = .{
+    .Artist = .artist,
+    .ArtistSort = .artist_sort,
+    .AlbumArtist = .album_artist,
+    .AlbumArtistSort = .album_artist_sort,
+    .Album = .album,
+    .AlbumSort = .album_sort,
+    .Title = .title,
+    .TitleSort = .title_sort,
+    .Track = .track,
+    .Disc = .disc,
+    .Name = .name,
+    .Genre = .genre,
+    .Date = .date,
+    .OriginalDate = .original_date,
+    .Composer = .composer,
+    .ComposerSort = .composer_sort,
+    .Performer = .performer,
+    .Comment = .comment,
+    .Label = .label,
+    .Grouping = .grouping,
+    .Work = .work,
+    .Conductor = .conductor,
+    .Ensemble = .ensemble,
+    .Movement = .movement,
+    .MovementNumber = .movement_number,
+    .ShowMovement = .show_movement,
+    .Location = .location,
+    .Mood = .mood,
+    .MUSICBRAINZ_ARTISTID = .mb_artist_id,
+    .MUSICBRAINZ_ALBUMARTISTID = .mb_album_artist_id,
+    .MUSICBRAINZ_ALBUMID = .mb_album_id,
+    .MUSICBRAINZ_TRACKID = .mb_track_id,
+    .MUSICBRAINZ_RELEASETRACKID = .mb_release_track_id,
+    .MUSICBRAINZ_RELEASEGROUPID = .mb_release_group_id,
+    .MUSICBRAINZ_WORKID = .mb_work_id,
+};
+const Map = @TypeOf(mpd_map);
+
+const MpdTags = std.meta.FieldEnum(Map);
+
+/// Doc comments mostly copied from https://mpd.readthedocs.io/en/latest/protocol.html#tags
 pub const Tags = struct {
     /// Not well-defined, see `composer` and `performer`
     artist: ?[]const u8 = null,
@@ -150,83 +163,13 @@ pub const Tags = struct {
     mb_work_id: ?[]const u8 = null,
 
     pub fn parseTag(self: *Tags, arena: std.mem.Allocator, kv: zmpd.KV) (std.fmt.ParseIntError || std.mem.Allocator.Error)!void {
-        if (std.mem.eql(u8, kv.key, "Artist"))
-            self.artist = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "ArtistSort"))
-            self.artist_sort = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "AlbumArtist"))
-            self.album_artist = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "AlbumArtistSort"))
-            self.album_artist_sort = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Album"))
-            self.album = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "AlbumSort"))
-            self.album_sort = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Title"))
-            self.title = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "TitleSort"))
-            self.title_sort = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Track"))
-            self.track = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "Disc"))
-            self.disc = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "Name"))
-            self.name = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Genre"))
-            self.genre = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Date"))
-            self.date = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "OriginalDate"))
-            self.original_date = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Composer"))
-            self.composer = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "ComposerSort"))
-            self.composer_sort = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Performer"))
-            self.performer = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Comment"))
-            self.comment = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Label"))
-            self.label = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Grouping"))
-            self.grouping = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Work"))
-            self.work = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Conductor"))
-            self.conductor = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Ensemble"))
-            self.ensemble = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Movement"))
-            self.movement = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "MovementNumber"))
-            self.movement_number = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "ShowMovement"))
-            self.show_movement = std.mem.eql(u8, kv.value, "1")
-        else if (std.mem.eql(u8, kv.key, "Location"))
-            self.location = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Mood"))
-            self.mood = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_ARTISTID"))
-            self.mb_artist_id = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_ALBUMARTISTID"))
-            self.mb_album_artist_id = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_ALBUMID"))
-            self.mb_album_id = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_TRACKID"))
-            self.mb_track_id = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_RELEASETRACKID"))
-            self.mb_release_track_id = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_RELEASEGROUPID"))
-            self.mb_release_group_id = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "MUSICBRAINZ_WORKID"))
-            self.mb_work_id = try arena.dupe(u8, kv.value);
+        if (std.meta.stringToEnum(MpdTags, kv.key)) |key| switch (key) {
+            .Track => self.track = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .Disc => self.disc = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .ShowMovement => self.show_movement = std.mem.eql(u8, kv.value, "1"),
+            inline else => |tag| {
+                @field(self, @tagName(@field(mpd_map, @tagName(tag)))) = try arena.dupe(u8, kv.value);
+            },
+        };
     }
 };
-
-test "FieldEnum(Tags) = Tag" {
-    try std.testing.expectEqualSlices(
-        []const u8,
-        std.meta.fieldNames(Tag),
-        std.meta.fieldNames(Tags),
-    );
-}

@@ -223,31 +223,22 @@ pub const Song = struct {
     tags: tags.Tags,
 
     fn parseKV(res: *Song, arena: std.mem.Allocator, kv: zmpd.KV, comptime check_file: bool) ResponseError!void {
-        if (check_file) {
-            if (std.mem.eql(u8, kv.key, "file")) {
-                res.file = try arena.dupe(u8, kv.value);
-                return;
+        if (std.meta.stringToEnum(enum { file, duration, Range, @"Last-Modified", Added, Pos, Id, Prio, Format }, kv.key)) |key| {
+            switch (key) {
+                .file => if (check_file) {
+                    res.file = try arena.dupe(u8, kv.value);
+                    return;
+                },
+                .duration => res.duration = try std.fmt.parseFloat(f32, kv.value),
+                .Range => res.range = try .parse(kv.value),
+                .@"Last-Modified" => res.last_modified = try arena.dupe(u8, kv.value),
+                .Added => res.added = try arena.dupe(u8, kv.value),
+                .Pos => res.pos = try std.fmt.parseUnsigned(u32, kv.value, 10),
+                .Id => res.song_id = try std.fmt.parseUnsigned(u32, kv.value, 10),
+                .Prio => res.priority = try std.fmt.parseUnsigned(u8, kv.value, 10),
+                .Format => res.format = try .parse(kv.value),
             }
-        }
-
-        if (std.mem.eql(u8, kv.key, "duration"))
-            res.duration = try std.fmt.parseFloat(f32, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Range"))
-            res.range = try .parse(kv.value)
-        else if (std.mem.eql(u8, kv.key, "Last-Modified"))
-            res.last_modified = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Added"))
-            res.added = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "Pos"))
-            res.pos = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "Id"))
-            res.song_id = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "Prio"))
-            res.priority = try std.fmt.parseUnsigned(u8, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "Format"))
-            res.format = try .parse(kv.value)
-        else
-            try res.tags.parseTag(arena, kv);
+        } else try res.tags.parseTag(arena, kv);
     }
 
     pub fn parse(client: *Client, arena: std.mem.Allocator) ResponseError!Song {
@@ -576,36 +567,28 @@ pub fn idle(
     var set = std.EnumSet(Subsystem).initEmpty();
 
     while (try self.nextLine()) |kv|
-        if (std.mem.eql(u8, kv.key, "changed")) {
-            if (std.mem.eql(u8, kv.value, "database"))
-                set.insert(.database)
-            else if (std.mem.eql(u8, kv.value, "update"))
-                set.insert(.update)
-            else if (std.mem.eql(u8, kv.value, "stored_playlist"))
-                set.insert(.playlist)
-            else if (std.mem.eql(u8, kv.value, "playlist"))
-                set.insert(.queue)
-            else if (std.mem.eql(u8, kv.value, "player"))
-                set.insert(.player)
-            else if (std.mem.eql(u8, kv.value, "mixer"))
-                set.insert(.mixer)
-            else if (std.mem.eql(u8, kv.value, "output"))
-                set.insert(.output)
-            else if (std.mem.eql(u8, kv.value, "options"))
-                set.insert(.options)
-            else if (std.mem.eql(u8, kv.value, "partition"))
-                set.insert(.partition)
-            else if (std.mem.eql(u8, kv.value, "sticker"))
-                set.insert(.sticker)
-            else if (std.mem.eql(u8, kv.value, "subscription"))
-                set.insert(.subscription)
-            else if (std.mem.eql(u8, kv.value, "message"))
-                set.insert(.message)
-            else if (std.mem.eql(u8, kv.value, "neighbor"))
-                set.insert(.neighbor)
-            else if (std.mem.eql(u8, kv.value, "mount"))
-                set.insert(.mount);
-        };
+        if (std.mem.eql(u8, kv.key, "changed"))
+            if (std.meta.stringToEnum(enum {
+                database,
+                update,
+                stored_playlist,
+                playlist,
+                player,
+                mixer,
+                output,
+                options,
+                partition,
+                sticker,
+                subscription,
+                message,
+                neighbor,
+                mount,
+            }, kv.value)) |value|
+                set.insert(switch (value) {
+                    .stored_playlist => .playlist,
+                    .playlist => .queue,
+                    inline else => |v| @field(Subsystem, @tagName(v)),
+                });
 
     return set;
 }
@@ -621,7 +604,8 @@ test idle {
         \\OK
     );
 
-    try std.testing.expect((try client.idle(null)).eql(.initMany(&.{ .queue, .player })));
+    const subsystems = try client.idle(null);
+    try std.testing.expect(subsystems.eql(.initMany(&.{ .queue, .player })));
 }
 
 pub const SingleConsume = enum {
@@ -673,61 +657,62 @@ pub fn getStatus(self: *Client, arena: std.mem.Allocator) ResponseError!Status {
 
     var res = Status{};
 
-    while (try self.nextLine()) |kv| {
-        if (std.mem.eql(u8, kv.key, "partition"))
-            res.partition = try arena.dupe(u8, kv.value)
-        else if (std.mem.eql(u8, kv.key, "volume"))
-            res.volume = try std.fmt.parseUnsigned(u8, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "repeat"))
-            res.repeat = std.mem.eql(u8, kv.value, "1")
-        else if (std.mem.eql(u8, kv.key, "random"))
-            res.random = std.mem.eql(u8, kv.value, "1")
-        else if (std.mem.eql(u8, kv.key, "single"))
-            res.single = if (std.mem.eql(u8, kv.value, "oneshot"))
-                .oneshot
-            else if (std.mem.eql(u8, kv.value, "1")) .on else .off
-        else if (std.mem.eql(u8, kv.key, "consume"))
-            res.consume = if (std.mem.eql(u8, kv.value, "oneshot"))
-                .oneshot
-            else if (std.mem.eql(u8, kv.value, "1")) .on else .off
-        else if (std.mem.eql(u8, kv.key, "playlist"))
-            res.queue_version = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "playlistlength"))
-            res.queue_length = try std.fmt.parseInt(i32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "state")) {
-            inline for (std.meta.fields(Status.State)) |s| {
-                if (std.mem.eql(u8, kv.value, s.name)) {
-                    res.state = @enumFromInt(s.value);
-                    break;
-                }
-            }
-        } else if (std.mem.eql(u8, kv.key, "song"))
-            res.song_position = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "songid"))
-            res.song_id = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "nextsong"))
-            res.next_song_position = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "nextsongid"))
-            res.next_song_id = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "elapsed"))
-            res.elapsed = try std.fmt.parseFloat(f32, kv.value)
-        else if (std.mem.eql(u8, kv.key, "duration"))
-            res.duration = try std.fmt.parseFloat(f32, kv.value)
-        else if (std.mem.eql(u8, kv.key, "bitrate"))
-            res.bitrate = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "xfade"))
-            res.crossfade_seconds = try std.fmt.parseUnsigned(u16, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "mixrampdb"))
-            res.mixramp_threshold_db = try std.fmt.parseFloat(f32, kv.value)
-        else if (std.mem.eql(u8, kv.key, "mixrampdelay"))
-            res.mixramp_delay_seconds = try std.fmt.parseFloat(f32, kv.value)
-        else if (std.mem.eql(u8, kv.key, "audio")) {
-            res.format = try .parse(kv.value);
-        } else if (std.mem.eql(u8, kv.key, "updating_db"))
-            res.update_id = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "lastloadedplaylist"))
-            res.last_loaded_playlist = try std.fmt.parseUnsigned(u32, kv.value, 10);
-    }
+    while (try self.nextLine()) |kv|
+        if (std.meta.stringToEnum(enum {
+            partition,
+            volume,
+            repeat,
+            random,
+            single,
+            consume,
+            playlist,
+            playlistlength,
+            state,
+            song,
+            songid,
+            nextsong,
+            nextsongid,
+            elapsed,
+            duration,
+            bitrate,
+            xfade,
+            mixrampdb,
+            mixrampdelay,
+            audio,
+            updating_db,
+            lastloadedplaylist,
+        }, kv.key)) |key| switch (key) {
+            .partition => res.partition = try arena.dupe(u8, kv.value),
+            .volume => res.volume = try std.fmt.parseUnsigned(u8, kv.value, 10),
+            .repeat => res.repeat = std.mem.eql(u8, kv.value, "1"),
+            .random => res.random = std.mem.eql(u8, kv.value, "1"),
+            .single => {
+                res.single = if (std.mem.eql(u8, kv.value, "oneshot"))
+                    .oneshot
+                else if (std.mem.eql(u8, kv.value, "1")) .on else .off;
+            },
+            .consume => {
+                res.consume = if (std.mem.eql(u8, kv.value, "oneshot"))
+                    .oneshot
+                else if (std.mem.eql(u8, kv.value, "1")) .on else .off;
+            },
+            .playlist => res.queue_version = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .playlistlength => res.queue_length = try std.fmt.parseInt(i32, kv.value, 10),
+            .state => res.state = std.meta.stringToEnum(Status.State, kv.value) orelse return error.UnexpectedResponse,
+            .song => res.song_position = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .songid => res.song_id = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .nextsong => res.next_song_position = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .nextsongid => res.next_song_id = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .elapsed => res.elapsed = try std.fmt.parseFloat(f32, kv.value),
+            .duration => res.duration = try std.fmt.parseFloat(f32, kv.value),
+            .bitrate => res.bitrate = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .xfade => res.crossfade_seconds = try std.fmt.parseUnsigned(u16, kv.value, 10),
+            .mixrampdb => res.mixramp_threshold_db = try std.fmt.parseFloat(f32, kv.value),
+            .mixrampdelay => res.mixramp_delay_seconds = try std.fmt.parseFloat(f32, kv.value),
+            .audio => res.format = try .parse(kv.value),
+            .updating_db => res.update_id = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .lastloadedplaylist => res.last_loaded_playlist = try std.fmt.parseUnsigned(u32, kv.value, 10),
+        };
 
     return res;
 }
@@ -816,22 +801,24 @@ pub fn getStats(self: *Client) ResponseError!Stats {
 
     var res = Stats{};
 
-    while (try self.nextLine()) |kv| {
-        if (std.mem.eql(u8, kv.key, "artists"))
-            res.artists = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "albums"))
-            res.albums = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "songs"))
-            res.songs = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "uptime"))
-            res.uptime = try std.fmt.parseUnsigned(u64, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "db_update"))
-            res.last_db_update = try std.fmt.parseUnsigned(u64, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "playtime"))
-            res.playtime = try std.fmt.parseUnsigned(u64, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "db_playtime"))
-            res.db_playtime = try std.fmt.parseUnsigned(u64, kv.value, 10);
-    }
+    while (try self.nextLine()) |kv|
+        if (std.meta.stringToEnum(enum {
+            artists,
+            albums,
+            songs,
+            uptime,
+            db_update,
+            playtime,
+            db_playtime,
+        }, kv.key)) |key| switch (key) {
+            .artists => res.artists = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .albums => res.albums = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .songs => res.songs = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .uptime => res.uptime = try std.fmt.parseUnsigned(u64, kv.value, 10),
+            .db_update => res.last_db_update = try std.fmt.parseUnsigned(u64, kv.value, 10),
+            .playtime => res.playtime = try std.fmt.parseUnsigned(u64, kv.value, 10),
+            .db_playtime => res.db_playtime = try std.fmt.parseUnsigned(u64, kv.value, 10),
+        };
 
     return res;
 }
@@ -1297,17 +1284,19 @@ pub const PosId = struct {
             };
 
             while (self.last_kv) |kv| {
-                if (std.mem.eql(u8, kv.key, "cpos")) {
-                    if (self.last_position) |_| {
-                        self.last_position = try std.fmt.parseUnsigned(u32, kv.value, 10);
-                        self.last_kv = try self.client.nextLine();
-                        return current;
-                    } else {
-                        current.position = try std.fmt.parseUnsigned(u32, kv.value, 10);
-                        self.last_position = current.position;
-                    }
-                } else if (std.mem.eql(u8, kv.key, "Id"))
-                    current.id = try std.fmt.parseUnsigned(u32, kv.value, 10);
+                if (std.meta.stringToEnum(enum { cpos, Id }, kv.key)) |key| switch (key) {
+                    .cpos => {
+                        if (self.last_position) |_| {
+                            self.last_position = try std.fmt.parseUnsigned(u32, kv.value, 10);
+                            self.last_kv = try self.client.nextLine();
+                            return current;
+                        } else {
+                            current.position = try std.fmt.parseUnsigned(u32, kv.value, 10);
+                            self.last_position = current.position;
+                        }
+                    },
+                    .Id => current.id = try std.fmt.parseUnsigned(u32, kv.value, 10),
+                };
 
                 self.last_kv = try self.client.nextLine();
             }
@@ -1582,18 +1571,21 @@ pub const Playlist = struct {
                 current.name = try arena.dupe(u8, last_name);
 
             while (self.last_kv) |kv| {
-                if (std.mem.eql(u8, kv.key, "playlist")) {
-                    if (self.last_name) |last_name| {
-                        arena.free(last_name);
-                        self.last_name = try arena.dupe(u8, kv.value);
-                        self.last_kv = try self.client.nextLine();
-                        return current;
-                    } else {
-                        self.last_name = try arena.dupe(u8, kv.value);
-                        current.name = try arena.dupe(u8, kv.value);
-                    }
-                } else if (std.mem.eql(u8, kv.key, "Last-Modified"))
-                    current.last_modified = try arena.dupe(u8, kv.value);
+                if (std.meta.stringToEnum(enum { playlist, @"Last-Modified" }, kv.key)) |key| switch (key) {
+                    .playlist => {
+                        if (self.last_name) |last_name| {
+                            arena.free(last_name);
+                            self.last_name = try arena.dupe(u8, kv.value);
+                            self.last_kv = try self.client.nextLine();
+                            return current;
+                        } else {
+                            self.last_name = try arena.dupe(u8, kv.value);
+                            current.name = try arena.dupe(u8, kv.value);
+                        }
+                    },
+                    .@"Last-Modified" => current.last_modified = try arena.dupe(u8, kv.value),
+                };
+
                 self.last_kv = try self.client.nextLine();
             }
 
@@ -1730,12 +1722,11 @@ pub fn getPlaylistLength(self: *Client, playlist: []const u8) ResponseError!Play
 
     var res = std.mem.zeroInit(PlaylistLength, .{});
 
-    while (try self.nextLine()) |kv| {
-        if (std.mem.eql(u8, kv.key, "songs"))
-            res.songs = try std.fmt.parseUnsigned(u32, kv.value, 10)
-        else if (std.mem.eql(u8, kv.key, "playtime"))
-            res.playtime_seconds = try std.fmt.parseUnsigned(u32, kv.value, 10);
-    }
+    while (try self.nextLine()) |kv|
+        if (std.meta.stringToEnum(enum { songs, playtime }, kv.key)) |key| switch (key) {
+            .songs => res.songs = try std.fmt.parseUnsigned(u32, kv.value, 10),
+            .playtime => res.playtime_seconds = try std.fmt.parseUnsigned(u32, kv.value, 10),
+        };
 
     return res;
 }
@@ -1821,14 +1812,14 @@ pub fn getAlbumArt(
 
         var binary: ?u32 = null;
 
-        blk: while (try self.nextLine()) |kv| {
-            if (std.mem.eql(u8, kv.key, "size"))
-                size = try std.fmt.parseUnsigned(u32, kv.value, 10)
-            else if (std.mem.eql(u8, kv.key, "binary")) {
-                binary = try std.fmt.parseUnsigned(u32, kv.value, 10);
-                break :blk;
-            }
-        }
+        blk: while (try self.nextLine()) |kv|
+            if (std.meta.stringToEnum(enum { size, binary }, kv.key)) |key| switch (key) {
+                .size => size = try std.fmt.parseUnsigned(u32, kv.value, 10),
+                .binary => {
+                    binary = try std.fmt.parseUnsigned(u32, kv.value, 10);
+                    break :blk;
+                },
+            };
 
         const n = (binary orelse return error.UnexpectedResponse);
         try self.reader.streamExact(writer, n);
@@ -1846,12 +1837,11 @@ pub const Count = struct {
     pub fn parse(client: *Client) ResponseError!Count {
         var res = Count{};
 
-        while (try client.nextLine()) |kv| {
-            if (std.mem.eql(u8, kv.key, "songs"))
-                res.songs = try std.fmt.parseUnsigned(u32, kv.value, 10)
-            else if (std.mem.eql(u8, kv.key, "playtime"))
-                res.length_seconds = try std.fmt.parseUnsigned(u64, kv.value, 10);
-        }
+        while (try client.nextLine()) |kv|
+            if (std.meta.stringToEnum(enum { songs, playtime }, kv.key)) |key| switch (key) {
+                .songs => res.songs = try std.fmt.parseUnsigned(u32, kv.value, 10),
+                .playtime => res.length_seconds = try std.fmt.parseUnsigned(u64, kv.value, 10),
+            };
 
         return res;
     }
@@ -1931,10 +1921,10 @@ pub const CountGroup = struct {
                         self.last_value = try arena.dupe(u8, kv.value);
                         current.value = try arena.dupe(u8, kv.value);
                     }
-                } else if (std.mem.eql(u8, kv.key, "songs"))
-                    current.songs = try std.fmt.parseUnsigned(u32, kv.value, 10)
-                else if (std.mem.eql(u8, kv.key, "playtime"))
-                    current.length_seconds = try std.fmt.parseUnsigned(u64, kv.value, 10);
+                } else if (std.meta.stringToEnum(enum { songs, playtime }, kv.key)) |key| switch (key) {
+                    .songs => current.songs = try std.fmt.parseUnsigned(u32, kv.value, 10),
+                    .playtime => current.length_seconds = try std.fmt.parseUnsigned(u64, kv.value, 10),
+                };
 
                 self.last_kv = try self.client.nextLine();
             }
