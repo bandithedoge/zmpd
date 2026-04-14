@@ -24,8 +24,9 @@
           ...
         }:
         let
-          zig = inputs.zig.packages.${system}.master;
-          inherit (zig) zls;
+          zig = inputs.zig.packages.${system}."0_16_0";
+          # inherit (zig) zls;
+          zls = inputs.zig.packages.${system}.zls-master; # until zls 0.16 is out
         in
         {
           devShells.default = pkgs.mkShell {

@@ -42,4 +42,16 @@ pub fn build(b: *std.Build) void {
 
     const check = b.step("check", "Check compile errors");
     check.dependOn(&lib.step);
+
+    const exe = b.addExecutable(.{
+        .name = "zmpc",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("zmpc.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zmpd", .module = zmpd }},
+        }),
+    });
+
+    b.installArtifact(exe);
 }
