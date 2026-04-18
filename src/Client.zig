@@ -156,16 +156,29 @@ pub fn assertVersion(self: *const Client, version: std.SemanticVersion) void {
     }
 }
 
+// TODO: handle DSD
 pub const AudioFormat = struct {
+    /// https://mpd.readthedocs.io/en/latest/user.html#global-audio-format
+    pub const BitDepth = enum { int8, int16, int24, int32, float32 };
+
     sample_rate: u32,
-    bits: u8,
+    bits: BitDepth,
     channels: u8,
 
-    pub fn parse(value: []const u8) std.fmt.ParseIntError!AudioFormat {
+    pub fn parse(value: []const u8) ResponseError!AudioFormat {
         var audio = std.mem.tokenizeScalar(u8, value, ':');
         return .{
             .sample_rate = try std.fmt.parseUnsigned(u32, audio.next().?, 10),
-            .bits = try std.fmt.parseUnsigned(u8, audio.next().?, 10),
+            .bits = if (std.meta.stringToEnum(enum { @"8", @"16", @"24", @"32", f }, audio.next().?)) |bits|
+                switch (bits) {
+                    .@"8" => .int8,
+                    .@"16" => .int16,
+                    .@"24" => .int24,
+                    .@"32" => .int32,
+                    .f => .float32,
+                }
+            else
+                return error.UnexpectedResponse,
             .channels = try std.fmt.parseUnsigned(u8, audio.next().?, 10),
         };
     }
@@ -173,9 +186,15 @@ pub const AudioFormat = struct {
     test parse {
         try std.testing.expectEqualDeep(AudioFormat{
             .sample_rate = 44100,
-            .bits = 16,
+            .bits = .int16,
             .channels = 2,
         }, parse("44100:16:2"));
+
+        try std.testing.expectEqualDeep(AudioFormat{
+            .sample_rate = 48000,
+            .bits = .float32,
+            .channels = 2,
+        }, parse("48000:f:2"));
     }
 };
 
@@ -352,7 +371,7 @@ test getCurrentSong {
                 .song_id = 95,
                 .format = .{
                     .sample_rate = 44100,
-                    .bits = 16,
+                    .bits = .int16,
                     .channels = 2,
                 },
                 .tags = .{
@@ -423,7 +442,7 @@ test getCurrentSong {
                 .song_id = 61,
                 .format = .{
                     .sample_rate = 44100,
-                    .bits = 16,
+                    .bits = .int16,
                     .channels = 2,
                 },
                 .tags = .{
@@ -488,7 +507,7 @@ test getCurrentSong {
                 .song_id = 45,
                 .format = .{
                     .sample_rate = 44100,
-                    .bits = 16,
+                    .bits = .int16,
                     .channels = 2,
                 },
                 .tags = .{
@@ -773,7 +792,7 @@ test getStatus {
             .mixramp_threshold_db = 0,
             .format = .{
                 .sample_rate = 44100,
-                .bits = 16,
+                .bits = .int16,
                 .channels = 2,
             },
         },
